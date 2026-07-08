@@ -3,12 +3,5 @@ pandas
 requests
 yfinance
 matplotlib
-
-# ⚠️ 以下是 data_loader.py / chart_plotter.py 可能會用到、但這次沒有上傳給我確認的套件
-# 請打開這兩個檔案看開頭的 import，把有用到的取消註解（刪掉最前面的 #）
-# twstock
-# FinMind
-# plotly
-# mplfinance
-# beautifulsoup4
-# lxml
+plotly
+finmind
