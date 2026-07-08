@@ -1,7 +1,12 @@
 streamlit
 pandas
+numpy
 requests
 yfinance
 matplotlib
 plotly
 finmind
+tqdm
+typing-extensions
+nest-asyncio
+ 
