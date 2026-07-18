@@ -4,11 +4,38 @@ from FinMind.data import DataLoader
 import streamlit as st
 from stock_names import get_stock_name
 
+
+def _create_finmind_loader():
+    """
+    建立 FinMind DataLoader，若使用者有在 Secrets 設定 FINMIND_TOKEN 則自動登入，
+    免費額度為 300 次/小時，註冊並使用 token 後可提高到 600 次/小時。
+    未設定 token 也能正常運作（走匿名額度），不會因此中斷程式。
+    """
+    dl = DataLoader()
+    try:
+        token = st.secrets.get("FINMIND_TOKEN", "")
+    except Exception:
+        token = ""
+    if token:
+        try:
+            dl.login_by_token(api_token=token)
+        except Exception as e:
+            print(f"⚠️ FinMind token 登入失敗，改用匿名額度：{e}")
+    return dl
+
+
+def _is_rate_limit_error(e) -> bool:
+    """判斷例外是否為 FinMind 額度用盡（HTTP 402 / 429 或訊息中含相關關鍵字）"""
+    msg = str(e)
+    return ('402' in msg or '429' in msg or 'Payment Required' in msg
+            or 'rate limit' in msg.lower() or '額度' in msg)
+
+
 class StockDataLoader:
     """台股數據引擎 - 全面採用 FinMind（不依賴 yfinance，避免雲端環境當機風險）"""
     
     def __init__(self):
-        self.dl = DataLoader()
+        self.dl = _create_finmind_loader()
 
     @st.cache_data(ttl=3600)
     def get_combined_data(_self, stock_id, days, use_adjusted=True):
@@ -20,6 +47,7 @@ class StockDataLoader:
             use_adjusted: True=還原K線(復權,預設), False=一般K線
         """
         try:
+            warnings = []
             end_date = datetime.date.today()
             start_date = end_date - datetime.timedelta(days=days + 150)
             start_str = start_date.strftime('%Y-%m-%d')
@@ -66,7 +94,7 @@ class StockDataLoader:
                 df_price = _self.dl.taiwan_stock_daily(stock_id=stock_id, start_date=start_str)
 
                 if df_price.empty:
-                    return None, "❌ 查無資料（此股票可能為興櫃、已下市或代碼有誤）", None
+                    return None, "❌ 查無資料（此股票可能為興櫃、已下市或代碼有誤）", None, []
 
                 df = df_price.rename(columns={
                     'Trading_Volume': 'volume',
@@ -138,9 +166,15 @@ class StockDataLoader:
                         df_pivot['主力合計'] = df_pivot[main_cols].sum(axis=1)
                     
                     df = pd.merge(df, df_pivot, on='date', how='left')
+                else:
+                    warnings.append('institutional_empty')
                     
             except Exception as e:
                 print(f"法人數據錯誤: {e}")
+                if _is_rate_limit_error(e):
+                    warnings.append('institutional_rate_limit')
+                else:
+                    warnings.append('institutional_error')
             
             # ========== 5. 融資融券 ==========
             try:
@@ -162,9 +196,15 @@ class StockDataLoader:
                     margin_data['融券餘額'] = pd.to_numeric(margin_data['融券餘額'], errors='coerce')
                     
                     df = pd.merge(df, margin_data, on='date', how='left')
+                else:
+                    warnings.append('margin_empty')
                     
             except Exception as e:
                 print(f"融資數據錯誤: {e}")
+                if _is_rate_limit_error(e):
+                    warnings.append('margin_rate_limit')
+                else:
+                    warnings.append('margin_error')
             
             # ========== 6. 數據清洗 ==========
             # 填補0
@@ -196,12 +236,12 @@ class StockDataLoader:
                 print(f"外資欄位類型: {df['外資'].dtype}")
                 print(f"最後3筆外資數據: {df['外資'].tail(3).tolist()}")
             
-            return df, None, stock_name
+            return df, None, stock_name, warnings
             
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return None, f"系統錯誤: {str(e)}", None
+            return None, f"系統錯誤: {str(e)}", None, []
     
     @st.cache_data(ttl=3600)
     def get_monthly_revenue(_self, stock_id):
@@ -302,6 +342,8 @@ class StockDataLoader:
         except Exception as e:
             import traceback
             traceback.print_exc()
+            if _is_rate_limit_error(e):
+                return None, "FinMind API 額度已用盡，請稍後再試（免費額度為 300次/小時）"
             return None, f"股權分散表載入錯誤: {str(e)}"
 
     @st.cache_data(ttl=3600)
