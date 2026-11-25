@@ -1,0 +1,6 @@
+streamlit>=1.45
+pandas>=2.2
+plotly>=5.20
+requests
+FinMind
+yfinance
